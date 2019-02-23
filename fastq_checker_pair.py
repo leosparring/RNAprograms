@@ -10,7 +10,7 @@ import os
 NR_OF_SEQUENCES_THRESHOLD = 1000
 
 # Specify the quality threshold you want these sequences to have
-# If you don't get NR_OF_SEQUENCES seqs of this quality, the quality will
+# If you don't get NR_OF_SEQUENCES seqs of this quality, the quality threshold will
 # lower in order to accomodate that
 QUALITY_THRESHOLD_START = 40
 

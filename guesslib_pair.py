@@ -10,78 +10,128 @@ START_FROM_SEQUENCE_NR = 0
 
 # Specify from how many paired alignments data
 # should be collected from.
-NR_OF_PAIRS = 50
+NR_OF_PAIRS = 10
+
+# Specify the maximum nr of alignments to perform before giving up on determining
+# the library type.
+MAX_BLATS = 1000
 
 ###--------- FUNCTIONS ---------###
 
 def guesslib_pair(ref, user_transcripts_f1, user_transcripts_f2):
-    '''
-    Determines if the strand is forward, reverse or unstranded, based
-    on the nr of pairs that indicate pair-types.
-    '''
+	'''
+	Finds NR_OF_PAIRS pairs and
+	determines if the library is forward, reverse or unstranded
+	'''
 
-    lib_type = 'N/A'
-    read_start = START_FROM_SEQUENCE_NR * 4
-    o_and_f = 0
-    o_and_r = 0
-    i_and_f = 0
-    i_and_r = 0
-    invalid_orientation_strand = 0
+	# Initializing variables
+	# Naming tmp fasta file according to input file name
+	tmp_fasta_1 = "tmp/tmp_blat_inpt_1_" + user_transcripts_f1
+	lib_type = "N/A"
+	succesful_lib_determination = False
+	read_start = START_FROM_SEQUENCE_NR * 4
+	seqs_searched = 0
+	collected_pairs = 0
+	o_and_f = 0
+	o_and_r = 0
+	i_and_f = 0
+	i_and_r = 0
+	invalid_orientation_strand = 0
 
-    # Collecting pairs
-    for i in range(NR_OF_PAIRS):
-        pair_type = "N/A"
+	with open (user_transcripts_f1) as f_in:
+		for i in range(read_start): # Skipping to START_FROM_SEQUENCE_NR
+			next(f_in)
+		while (collected_pairs < NR_OF_PAIRS and seqs_searched < MAX_BLATS):
+			pair_type = "N/A" # Resetting variables for new search
+			nr_of_results = 0
 
-        (pair_type, read_start) = find_a_significant_pair(ref,
-                                            user_transcripts_f1,
-                                            user_transcripts_f2,
-                                            read_start)
+			seq_id_R1 = write_tmp_fasta(tmp_fasta_1, f_in)
+			(seq_start_R1, seq_end_R1, nr_of_results_R1,
+				ref_transcript_id_R1) = run_blat(ref, tmp_fasta_1)
+			seqs_searched += 1
 
-        if (pair_type == "OF"):
-            o_and_f += 1
-            print("Added to OF.\n")
-        elif (pair_type == "OR" ):
-            o_and_r += 1
-            print("Added to OR.\n")
-        elif (pair_type == "IF"):
-            i_and_f += 1
-            print("Added to IF.\n")
-        elif (pair_type == "IR"):
-            i_and_r += 1
-            print("Added to IR.\n")
-        else:
-            invalid_orientation_strand += 1
-            print("Added to none of them.\n")
+			if (nr_of_results_R1 == 1):
+				(seq_start_R2, seq_end_R2, nr_of_results_R2,
+            		ref_transcript_id_R2) = blat_corresponding_seq_in_f2(ref,
+                                                user_transcripts_f2,
+                                                seq_id_R1)
 
-    # Determination of library type.
-    if ((i_and_r + i_and_f) > (o_and_r + o_and_f)):
-        if (i_and_r == 0):
-            ratio_IF_over_IR = 9
-        else:
-            ratio_IF_over_IR = (i_and_f/i_and_r)
-        if (ratio_IF_over_IR > 8):
-            lib_type = 'ISF'
-        elif (ratio_IF_over_IR < (1/8)):
-            lib_type = 'ISR'
-        else:
-            lib_type = 'IU'
-    if ((i_and_r+i_and_f) < (o_and_r+o_and_f)):
-        if (o_and_r == 0):
-            ratio_OF_over_OR = 9
-        else:
-            ratio_OF_over_OR = (o_and_f/o_and_r)
-        if (ratio_OF_over_OR > 8):
-            lib_type = 'OSF'
-        elif (ratio_OF_over_OR < (1/8)):
-            lib_type = 'OSR'
-        else:
-            lib_type = 'UO'
+				if (nr_of_results_R1 == 1 and ref_transcript_id_R1 == ref_transcript_id_R2):
+					pair_type = pair_analysis(seq_start_R1,
+				                                seq_end_R1,
+				                                seq_start_R2,
+				                                seq_end_R2)
+					collected_pairs += 1
+					print("Collected pairs: " + str(collected_pairs))
 
-    print(f'\nOF: {o_and_f}, OR: {o_and_r}',
-            f'IF: {i_and_f}, IR: {i_and_r}, neither: {invalid_orientation_strand}.',
-            f'The most likely lib type is {lib_type}.')
+					# Increment corresponding pair type
+					if (pair_type == "OF"):
+						o_and_f += 1
+						print("Added to OF.")
+					elif (pair_type == "OR" ):
+						o_and_r += 1
+						print("Added to OR.")
+					elif (pair_type == "IF"):
+						i_and_f += 1
+						print("Added to IF.")
+					elif (pair_type == "IR"):
+						i_and_r += 1
+						print("Added to IR.")
+					else:
+						invalid_orientation_strand += 1
+						print("Added to none of them.")
 
-    return (lib_type, o_and_f, o_and_r, i_and_f, i_and_r)
+	subprocess.run(['rm', tmp_fasta_1]) # Removing the tmp FASTA file
+
+	if (seqs_searched == MAX_BLATS):
+		print(f'Could not determine library type\n'
+			f'Tried to align {MAX_BLATS} sequences'
+			f' of which {collected_pairs} pairs were collected')
+	else:
+		lib_type = determine_lib_type(o_and_f, o_and_r, i_and_f, i_and_r)
+		succesful_lib_determination = True
+
+		print(f'\nThe library type determination was succesful\n'
+			f'OF: {o_and_f}, OR: {o_and_r}'
+			f'IF: {i_and_f}, IR: {i_and_r}, neither: {invalid_orientation_strand}.\n'
+			f'The most likely lib type is {lib_type}.')
+
+	return (lib_type, o_and_f, o_and_r, i_and_f, i_and_r, succesful_lib_determination)
+
+
+def determine_lib_type(o_and_f, o_and_r, i_and_f, i_and_r):
+	'''
+	This function determines the library type, based on
+	the number of inward-forward, inward-reverse outward-forward and
+	outward-reverse reads.
+	'''
+
+	lib_type = "N/A"
+
+	if ((i_and_r + i_and_f) > (o_and_r + o_and_f)):
+		if (i_and_r == 0):
+			ratio_IF_over_IR = 9
+		else:
+			ratio_IF_over_IR = (i_and_f/i_and_r)
+		if (ratio_IF_over_IR > 8):
+			lib_type = 'ISF'
+		elif (ratio_IF_over_IR < (1/8)):
+			lib_type = 'ISR'
+		else:
+			lib_type = 'IU'
+	if ((i_and_r+i_and_f) < (o_and_r+o_and_f)):
+		if (o_and_r == 0):
+			ratio_OF_over_OR = 9
+		else:
+			ratio_OF_over_OR = (o_and_f/o_and_r)
+		if (ratio_OF_over_OR > 8):
+			lib_type = 'OSF'
+		elif (ratio_OF_over_OR < (1/8)):
+			lib_type = 'OSR'
+		else:
+			lib_type = 'UO'
+
+	return lib_type
 
 
 def pair_analysis(seq_start_R1, seq_end_R1, seq_start_R2, seq_end_R2):
@@ -106,52 +156,9 @@ def pair_analysis(seq_start_R1, seq_end_R1, seq_start_R2, seq_end_R2):
         elif (distance_r2_r1 > 750):
             pair_type = "OR"
 
-    print(f'(Avg of R2) - (Avg of R1) is: {distance_r2_r1}\n')
+    print(f'(Avg of R2) - (Avg of R1) is: {distance_r2_r1}')
 
     return pair_type
-
-
-def find_a_significant_pair(ref, user_transcripts_f1, user_transcripts_f2, read_start):
-    '''
-    This function finds a significant alignment in transcript file 1,
-    and then finds the corresponding sequence's alignment in file 2.
-    If they are not significant, the first fastq file is searched further.
-    '''
-
-    nr_of_results_R1 = 0
-    nr_of_results_R2 = 0
-    pair_type = "N/A"
-
-    while ((nr_of_results_R1 != 1 or nr_of_results_R2 != 1)
-            or (pair_type == "N/A")):
-
-        nr_of_results_R1 = 0
-        nr_of_results_R2 = 0 # Resetting the hits
-
-        (seq_id, seq_start_R1, seq_end_R1,
-            nr_of_results_R1, ref_transcript_id_R1,
-            read_start) = find_good_blat_alignment_f1(ref,
-                                                user_transcripts_f1,
-                                                read_start)
-
-        (seq_start_R2, seq_end_R2, nr_of_results_R2,
-            ref_transcript_id_R2) = blat_corresponding_seq_in_f2(ref,
-                                                user_transcripts_f2,
-                                                seq_id)
-
-        if (nr_of_results_R1 == 1 and nr_of_results_R2 == 1
-            and ref_transcript_id_R1 == ref_transcript_id_R2):
-            pair_type = pair_analysis(seq_start_R1,
-                                        seq_end_R1,
-                                        seq_start_R2,
-                                        seq_end_R2)
-
-    print(f'The R1 start and end is',
-            f'({seq_start_R1}, {seq_end_R1}). ',
-            f'The R2 start and end is ({seq_start_R2},{seq_end_R2}).')
-
-    return (pair_type, read_start)
-
 
 def blat_corresponding_seq_in_f2(ref, user_transcripts, seq_id_R1):
     '''
@@ -191,43 +198,21 @@ def blat_corresponding_seq_in_f2(ref, user_transcripts, seq_id_R1):
     return (seq_start, seq_end,
             nr_of_results, ref_transcript_id)
 
-def find_good_blat_alignment_f1(ref, user_transcripts, read_start):
-    '''
-    This function reads the user's first transcript file line by line,
-    starting from line read_start, and extracts sequences. Then it runs
-    a blat search with the sequence. If it meets the conditions, it returns
-    the seq id, start and end, and the significance of the result.
-    '''
+def write_tmp_fasta(tmp_fasta, fastq):
+	'''
+	Writes a temporary fasta file, taking in a fastq-file.
+	'''
 
-    nr_of_results = 0
-    iterations = 0
+	with open(tmp_fasta, "w+") as f_out: # Creating FASTA tmp
+		first_line = '>' + fastq.readline()[1:]
+		seq_id = first_line.split(" ")[0]
+		print(seq_id)
+		f_out.write(first_line)  # Writes the header into f_out.
+		f_out.write(fastq.readline()) # Writes the sequence into f_out.
+		next(fastq) # Skipping past the +, and phred lines.
+		next(fastq)
 
-    tmp_in_1 = "tmp/tmp_blat_inpt_1_" + user_transcripts #naming temp fasta file
-
-    with open(user_transcripts) as f_in:
-        for i in range(read_start):
-            next(f_in)
-        while (nr_of_results != 1):
-            with open(tmp_in_1, "w+") as f_out: # Creating FASTA tmp
-                first_line = '>' + f_in.readline()[1:]
-                seq_id = first_line.split(" ")[0]
-                print(seq_id)
-                f_out.write(first_line)  # Writes the header into f_out.
-                f_out.write(f_in.readline()) # Writes the sequence into f_out.
-            next(f_in)
-            next(f_in)
-            (seq_start, seq_end, nr_of_results,
-                ref_transcript_id) = run_blat(ref, tmp_in_1)
-
-            iterations += 1
-
-    read_start = read_start + iterations * 4
-
-    subprocess.run(['rm', tmp_in_1]) # Removing the tmp file
-
-    return (seq_id, seq_start, seq_end,
-            nr_of_results, ref_transcript_id, read_start)
-
+	return seq_id
 
 def run_blat(ref, seq):
     ''' This function calls blat with a single sequence seq.fa as
@@ -267,7 +252,7 @@ def run_blat(ref, seq):
     print(f'the reference transcript id is {ref_transcript_id}')
     print(f'the number of results for this blat is: {nr_of_results}\n')
 
-    subprocess.run(['rm', tmp_rslt]) # Removing the tmp file
+    subprocess.run(['rm', tmp_rslt]) # Removing the tmp blat rslt file
 
     return (int(seq_start), int(seq_end),
             nr_of_results, ref_transcript_id)
