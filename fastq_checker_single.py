@@ -1,8 +1,7 @@
 import argparse
-import os
 import subprocess
 
-###--- GLOBAL VARIABLES ---###
+###--------- GLOBAL VARIABLES ---------###
 
 # Specify the least number of sequences in the out-file
 NR_OF_SEQUENCES_THRESHOLD = 1000
@@ -10,16 +9,20 @@ NR_OF_SEQUENCES_THRESHOLD = 1000
 # Specify the quality threshold you want these sequences to have
 # If you don't get NR_OF_SEQUENCES seqs of this quality, the quality will
 # lower in order to accomodate that
-QUALITY_THRESHOLD_START = 30
+QUALITY_THRESHOLD_START = 40
 
-###--- FUNCTIONS ---###
+# If this is set to True, the output file will replace the input file, the initial
+# data will thus be lost. (be careful)
+REPLACE_INPUT = False
+
+###--------- FUNCTIONS ---------###
 
 def proper_fastq_format(fastq_file):
 	'''
 	This function returns True if the fastq file is properly formatted.
 	'''
 
-	fastq_format = False
+	proper_fastq_format = False
 	fastq_decision = 0
 	counter = 0
 
@@ -42,9 +45,9 @@ def proper_fastq_format(fastq_file):
 			counter += 1
 
 	if (fastq_decision == counter):
-		fastq_format = True
+		proper_fastq_format = True
 
-	return fastq_format
+	return proper_fastq_format
 
 
 def calculate_phred_quality(phred_string):
@@ -64,83 +67,73 @@ def calculate_phred_quality(phred_string):
 	return phred_quality
 
 
-def remove_low_quality_reads(fastq_file, quality_threshold):
+def check_format_and_remove_low_quality_reads_single(fastq_file):
 	'''
-	This function removes low quality reads as specified by
-	an average Q-threshold.
-	'''
-
-	nr_of_sequences = 0
-	q_fastq_file = "Q" + str(int(quality_threshold)) + "_" + fastq_file
-
-	f = open(q_fastq_file, "w+")
-	f.close()
-
-	with open(fastq_file) as f_in:
-		counter = 0
-		for line in f_in:
-			if (counter % 4 == 0):
-				first_line = line
-			if (counter % 4 == 1):
-				second_line = line
-			if (counter % 4 == 2):
-				third_line = line
-			if (counter % 4 == 3):
-				fourth_line = line
-				phred_quality = calculate_phred_quality(fourth_line)
-
-				if (phred_quality > quality_threshold):
-					nr_of_sequences += 1
-					with open(q_fastq_file, "a") as f_out: 
-						f_out.write(first_line)
-						f_out.write(second_line)
-						f_out.write(third_line)
-						f_out.write(fourth_line)
-
-			counter += 1
-
-	return q_fastq_file, nr_of_sequences, quality_threshold
-
-
-def remove_low_quality_reads_without_q(fastq_file):
-	'''
-	This function removes low quality reads without a specified Q-theshold.
-	Instead, it will remove the low quality reads below QUALITY_THRESHOLD_START.
-	If the number of sequences are below NR_OF_SEQUENCES_THRESHOLD, it will
-	iterate with a lower threshold.
+	This function writes a file with reads over a certain
+	average Q-threshold. It then checks if it has at least
+	NR_OF_SEQUENCES_THRESHOLD sequences. If it doesnt, it lowers the
+	threshold by 1, and loops through the file again to append the file
+	with sequences of meeting this lower quality threshold.
 	'''
 
-	# Initializing values
 	quality_threshold = QUALITY_THRESHOLD_START
-	nr_of_sequences_threshold = NR_OF_SEQUENCES_THRESHOLD
-	nr_of_sequences = 0
-	q_fastq_file = "N/A"
-	proper_format = False
+	q_fastq_file = "singlechecked_" + fastq_file
+	nr_of_sequences_out = 0
+	fin_avg_quality = 0
+	fout_avg_quality = 0
+	nr_of_seqs_fin = 0
+	seq_ids = [] # A list of sequences stored in the outfiles
 
-	if proper_fastq_format(fastq_file):
-		proper_format = True
+	proper_format = proper_fastq_format(fastq_file)
 
-		(q_fastq_file,
-			nr_of_sequences,
-			quality_threshold) = remove_low_quality_reads(fastq_file,
-														quality_threshold)
+	if proper_format:
+		f = open(q_fastq_file, "w+") # Initializing the outfile.
+		f.close()
 
-		while (nr_of_sequences < nr_of_sequences_threshold):
-			if os.path.exists(q_fastq_file):
-				subprocess.run(['rm', q_fastq_file]) # Remove the file generated
-														# in previous iteration
-			quality_threshold = quality_threshold - 1 # Lower Q-treshold
+		first_iteration = True
+		while (nr_of_sequences_out < NR_OF_SEQUENCES_THRESHOLD):
+			with open(fastq_file) as f_in:
+				counter = 0
+				for line in f_in:
+					if (counter % 4 == 0):
+						first_line = line
+					if (counter % 4 == 1):
+						second_line = line
+					if (counter % 4 == 2):
+						third_line = line
+					if (counter % 4 == 3):
+						fourth_line = line
+						phred_quality = calculate_phred_quality(fourth_line)
+						if first_iteration:
+							fin_avg_quality += phred_quality
+							nr_of_seqs_fin += 1
+						if (phred_quality > quality_threshold
+							and first_line not in seq_ids):
+							seq_ids.append(first_line)
+							fout_avg_quality += phred_quality
+							nr_of_sequences_out += 1
+							with open(q_fastq_file, "a") as f_out: 
+								f_out.write(first_line)
+								f_out.write(second_line)
+								f_out.write(third_line)
+								f_out.write(fourth_line)
+					
+					counter += 1
+			quality_threshold = quality_threshold - 1
+			first_iteration = False
 
-			(q_fastq_file,	# Get new files file-pair
-				nr_of_sequences,
-				quality_threshold) = remove_low_quality_reads(fastq_file,
-															quality_threshold)
+		fin_avg_quality = fin_avg_quality / nr_of_seqs_fin
+		fout_avg_quality = fout_avg_quality / nr_of_sequences_out
 
-	return (q_fastq_file, nr_of_sequences,
-			quality_threshold, proper_format)
+		if REPLACE_INPUT:
+			subprocess.run(["mv", q_fastq_file, fastq_file])
 
+		print(f'All of the sequences in the out file '
+			f'have an average quality above {quality_threshold}.')
 
-###--- MAIN ---###
+	return proper_format, nr_of_sequences_out, fout_avg_quality, fin_avg_quality
+
+###--------- MAIN ---------###
 
 def main():
 
@@ -148,18 +141,15 @@ def main():
 	parser.add_argument("-f", "--file", help="FASTQ file")
 	args = parser.parse_args()
 
-	if not len(vars(args)) == 1:
-		print("Specify the file and quality threshold")
-
-	else:
-			(q_fastq_file, nr_of_sequences,
-				quality_threshold,
-				proper_format) = remove_low_quality_reads_without_q(args.file)
-			
-			print(f'The input file was in proper fastq format: {proper_format}\n',
-				f'The subsetted file is called: {q_fastq_file}',
-				f'It contains {nr_of_sequences} nr of sequences',
-				f'with quality above Q={quality_threshold}.')
+	(proper_format,
+		nr_of_sequences_fout,
+		fout_avg_quality,
+		fin_avg_quality) = check_format_and_remove_low_quality_reads_single(args.file)
+	
+	print(f'The input file was in proper fastq format: {proper_format}\n'
+		f'It contains {nr_of_sequences_fout} nr of sequences '
+		f'and average quality Q = {fout_avg_quality}.\n'
+		f'The average quality of {args.file} Q = {fin_avg_quality}.')
 
 
 if __name__ == "__main__":

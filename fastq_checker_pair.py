@@ -1,10 +1,7 @@
-from fastq_checker_single import remove_low_quality_reads
-from fastq_checker_single import proper_fastq_format
 import subprocess
 import argparse
-import os
 
-###--- GLOBAL VARIABLES ---###
+###--------- GLOBAL VARIABLES ---------###
 
 # Specify the least number of sequences in the out-files
 NR_OF_SEQUENCES_THRESHOLD = 1000
@@ -14,145 +11,169 @@ NR_OF_SEQUENCES_THRESHOLD = 1000
 # lower in order to accomodate that
 QUALITY_THRESHOLD_START = 40
 
-###--- FUNCTIONS ---###
+# If this is set to True, the output file will replace the input file, the initial
+# data will thus be lost. (be careful)
+REPLACE_INPUT = False
 
-def subset_to_pairs_without_q(fastq_file_1, fastq_file_2):
+###--------- FUNCTIONS ---------###
+
+def check_format_and_remove_low_quality_reads_pair(fastq_file_1, fastq_file_2):
 	'''
-	This function subsets the two fastq files and returns at least
-	the nr of sequences specified as the global variable. It starts with
-	the quality threshold specified in the second global variable.
-	The function returns the nr of sequences in the subsetted files, the
-	quality threshold used, and whether the subsetting was succesful
-	or not.
+	This function writes a file with reads over a certain
+	average Q-threshold. It then checks if it has at least
+	NR_OF_SEQUENCES_THRESHOLD sequences. If it doesnt, it lowers the
+	threshold by 1, and loops through the file again to append the file
+	with sequences of meeting this lower quality threshold. It also makes
+	sure to only include a sequence in its out files if the corresponding
+	sequence in the other file also meets the quality threshold.
 	'''
-	
+
+	# Naming outfiles and initializing variables
+	pairchecked_f1 = "pairchecked_" + fastq_file_1
+	pairchecked_f2 = "pairchecked_" + fastq_file_2
 	quality_threshold = QUALITY_THRESHOLD_START
-	nr_of_sequences_threshold = NR_OF_SEQUENCES_THRESHOLD
+	proper_formats = False
+	fin1_avg_quality = 0
+	fin2_avg_quality = 0
+	fin_avg_quality = 0
+	fout1_avg_quality = 0
+	fout2_avg_quality = 0
+	fout_avg_quality = 0
+	nr_of_seqs_fout = 0
+	nr_of_seqs_fin = 0
+	seq_ids = [] # A list of sequences stored in the outfiles
 
-	(subset_successful, 
-		nr_of_sequences,
-		new_fastq_file_1,
-		new_fastq_file_2) = subset_to_pairs(fastq_file_1,
-											fastq_file_2,
-											quality_threshold)
+	proper_format_f1 = proper_fastq_format(fastq_file_1) # Checking if f1 and f2 are
+	proper_format_f2 = proper_fastq_format(fastq_file_2) # proper formatted fastq files
 
-	while (subset_successful and nr_of_sequences < nr_of_sequences_threshold):
-		if os.path.exists(new_fastq_file_1):
-			subprocess.run(['rm', new_fastq_file_1])
-			subprocess.run(['rm', new_fastq_file_2])
+	if (proper_format_f1 and proper_format_f2):
+		proper_formats = True
 
-		quality_threshold = quality_threshold - 1
-		
-		(subset_successful, 
-		nr_of_sequences,
-		new_fastq_file_1,
-		new_fastq_file_2) = subset_to_pairs(fastq_file_1,
-											fastq_file_2,
-											quality_threshold)
+		fout_1 = open(pairchecked_f1, "w+") # Initializing outfile 1
+		fout_1.close()
+		fout_2 = open(pairchecked_f2, "w+") # Initializing outfile 2
+		fout_2.close()
 
-	return (subset_successful, nr_of_sequences,
-			quality_threshold, new_fastq_file_1, new_fastq_file_2)
-
-
-def subset_to_pairs(fastq_file_1, fastq_file_2, quality_threshold):
-	'''
-	This function subsets the two fastq files to the specified threshold,
-	then it removes the transcripts that are only in one of the two files.
-	In this way there will still be a complete set of pairs after subsetting.
-	'''
-
-	proper_format = False
-	nr_of_sequences = 0
-	pairchecked_file_1 = "N/A"
-	pairchecked_file_2 = "N/A"
-
-	if (proper_fastq_format(fastq_file_1)
-		and proper_fastq_format(fastq_file_2)):
-		proper_format = True
-
-		q_fastq_file_1 = remove_low_quality_reads(fastq_file_1,
-													quality_threshold)[0]
-		q_fastq_file_2 = remove_low_quality_reads(fastq_file_2,
-													quality_threshold)[0]
-		
-		# Naming outfiles
-		pairchecked_file_1 = 'paircheck_' + q_fastq_file_1
-		pairchecked_file_2 = 'paircheck_' + q_fastq_file_2
-
-		# Initiating lists of sequences
-		seq_ids_1 = []
-		seq_ids_2 = []
-
-		# Get a list of sequence ID's in q_fastq_file_1
-		with open(q_fastq_file_1) as fin_1:
-			counter = 0
-			for line in fin_1:
-				if (counter % 4 == 0):
-					seq_id = line.split(" ")[0]
-					seq_ids_1.append(seq_id)
-				counter += 1
-
-		# Get a list of sequence ID's in q_fastq_file_2.
-		# Check if the sequences in q_fastq_file_2 are in the list seq_ids_1
-		# if they are, write them to pairchecked_file_2
-		# Also, determine the number of sequences in the final files.
-		with open(pairchecked_file_2, 'w') as f_out:
-			with open(q_fastq_file_2) as fin_2:
-				counter = 0
-				for line in fin_2:
-					if (counter % 4 == 0):
-						first_line = line
-						seq_id = first_line.split(" ")[0]
-						seq_ids_2.append(seq_id)
-						if seq_id in seq_ids_1:
-							add_to_new = True
-							nr_of_sequences += 1
-							f_out.write(first_line)
-						else:
-							add_to_new = False
-					if (add_to_new):
-						if (counter % 4 == 1):
-							f_out.write(line)
-						if (counter % 4 == 2):
-							f_out.write(line)
-						if (counter % 4 == 3):
-							f_out.write(line)
-							add_to_new = False	
-					counter += 1
-
-		# Check if the sequences in q_fastq_file_2 are in the list seq_ids_2.
-		# If they are, write them to pairchecked_file_1.
-		with open(pairchecked_file_1, 'w') as f_out:
-			with open(q_fastq_file_1) as fin_1:
+		first_iteration = True
+		while (nr_of_seqs_fout < NR_OF_SEQUENCES_THRESHOLD):
+			with open(fastq_file_1) as fin_1, open(fastq_file_2) as fin_2:
 				counter = 0
 				for line in fin_1:
-					if (counter % 4 == 0):
-						first_line = line
-						seq_id = first_line.split(" ")[0]
-						if seq_id in seq_ids_2:
-							add_to_new = True
-							f_out.write(first_line)
-						else:
-							add_to_new = False
-					if (add_to_new):
-						if (counter % 4 == 1):
-							f_out.write(line)
-						if (counter % 4 == 2):
-							f_out.write(line)
-						if (counter % 4 == 3):
-							f_out.write(line)
-							add_to_new = False	
+					if (counter % 4 == 0): # Reading first line in f1 and f2
+						first_line_f1 = line
+						first_line_f2 = fin_2.readline()
+					if (counter % 4 == 1): # Reading second line in f1 and f2
+						second_line_f1 = line
+						second_line_f2 = fin_2.readline()
+					if (counter % 4 == 2): # Reading third line in f1 and f2
+						third_line_f1 = line
+						third_line_f2 = fin_2.readline()
+					if (counter % 4 == 3): # Reading fourth line in f1 and f2
+						fourth_line_f1 = line
+						fourth_line_f2 = fin_2.readline()
+						# Calculating the quality of the sequences
+						phred_quality_f1 = calculate_phred_quality(fourth_line_f1)
+						phred_quality_f2 = calculate_phred_quality(fourth_line_f2)
+						if first_iteration:
+							# Calculating the average quality of the in file seqs
+							fin1_avg_quality += phred_quality_f1
+							fin2_avg_quality += phred_quality_f2
+							nr_of_seqs_fin += 1
+						if (phred_quality_f1 > quality_threshold and phred_quality_f2 > quality_threshold
+							and first_line_f1 not in seq_ids): # Making sure we haven't
+							seq_ids.append(first_line_f1)		# already added the seq
+							# Calculating the average quality of the out file seqs
+							fout1_avg_quality += phred_quality_f1
+							fout2_avg_quality += phred_quality_f2
+							nr_of_seqs_fout += 1
+							with open(pairchecked_f1, "a") as fout_1: # Appending
+								fout_1.write(first_line_f1)			# the sequence to
+								fout_1.write(second_line_f1)		# outfile 1
+								fout_1.write(third_line_f1)
+								fout_1.write(fourth_line_f1)
+							with open(pairchecked_f2, 'a') as fout_2: # Appending the
+								fout_2.write(first_line_f2)				# sequence to
+								fout_2.write(second_line_f2)			# outfile 2
+								fout_2.write(third_line_f2)
+								fout_2.write(fourth_line_f2)
 					counter += 1
 
-		# Remove the files used as input to this function.
-		subprocess.run(['rm', q_fastq_file_1])
-		subprocess.run(['rm', q_fastq_file_2])
+			quality_threshold = quality_threshold - 1 # Lowering quality
+			first_iteration = False						# for next iteration
 
-	return (proper_format, nr_of_sequences,
-			pairchecked_file_1, pairchecked_file_2)
+		if REPLACE_INPUT: # Replacing the input files with the output files
+			subprocess.run(["mv", pairchecked_f1, fastq_file_1])
+			subprocess.run(["mv", pairchecked_f2, fastq_file_2])
+
+		# Calculating the average Q-values
+		fin1_avg_quality = fin1_avg_quality / nr_of_seqs_fin
+		fin2_avg_quality = fin2_avg_quality / nr_of_seqs_fin
+		fin2_avg_quality = (fin1_avg_quality + fin2_avg_quality)/2
+		fout1_avg_quality = fout1_avg_quality / nr_of_seqs_fout
+		fout2_avg_quality = fout2_avg_quality / nr_of_seqs_fout
+		fout_avg_quality = (fout1_avg_quality + fout2_avg_quality)/2
+
+		print(f'All of the sequences in the out files '
+			f'have average qualities above {quality_threshold}.\n'
+			f'Average quality of {fastq_file_1}: {fin1_avg_quality}\n'
+			f'Average quality of corresponding outfile to f1: {fout1_avg_quality}\n'
+			f'Average quality of {fastq_file_2}: {fin2_avg_quality}\n'
+			f'Average quality of corresponding outfile to f2: {fout2_avg_quality}')
+
+	return proper_formats, nr_of_seqs_fout, fout_avg_quality, fin_avg_quality
 
 
-###--- MAIN ---###
+def proper_fastq_format(fastq_file):
+	'''
+	This function returns True if the fastq file is properly formatted.
+	'''
+
+	fastq_format = False
+	fastq_decision = 0
+	counter = 0
+
+	with open(fastq_file) as f_in:
+		for line in f_in:
+			if (counter % 4 == 0): # Checking first line
+				if (line.startswith('@')):
+					fastq_decision += 1
+			if (counter % 4 == 1): # Checking second line
+				second_line = line
+				if all(c in 'ATGCNatgcn\n' for c in list(line)):
+					fastq_decision += 1
+			if (counter % 4 == 2): # Checking third line
+				if (line.startswith('+')):
+					fastq_decision += 1
+			if (counter % 4 == 3): # Checking fourth line
+				if (len(line) == len(second_line)):
+					fastq_decision += 1
+
+			counter += 1
+
+	if (fastq_decision == counter):
+		fastq_format = True
+
+	return fastq_format
+
+
+def calculate_phred_quality(phred_string):
+	'''
+	This function calculates the average Q-phred based on an ascii-string,
+	using the phred ascii-33 system.
+	'''
+
+	phred_char_list = list(phred_string)
+	phred_quality = 0
+
+	for i in range(len(phred_char_list)):
+		phred_quality = phred_quality + ord(phred_char_list[i])-33
+
+	phred_quality = phred_quality/len(phred_char_list)
+	
+	return phred_quality
+
+
+###--------- MAIN ---------###
 
 def main():
 
@@ -161,18 +182,12 @@ def main():
 	parser.add_argument("-f2", "--file_2", required=True, help="corresponding FASTQ of paired sequences")
 	args = parser.parse_args()
 
-	
-	(proper_format,
-		nr_of_sequences,
-		quality,
-		out_file_1,
-		out_file_2) = subset_to_pairs_without_q(args.file_1,
-												args.file_2)
+	(proper_formats, nr_of_seqs_fout, fout_avg_quality,
+		fin_avg_quality) = check_format_and_remove_low_quality_reads_pair(args.file_1,
+																			args.file_2)
 
-	print(f'The two input files are properly formatted: {proper_format}\n',
-		f'The number of sequences in your subsetted files are: {nr_of_sequences}\n',
-		f'All of these sequences have a quality higher than Q={str(quality)}\n',
-		f'The file names are {out_file_1} and {out_file_2}')
+	print(f'The two input files are properly formatted: {proper_formats}\n'
+		f'The number of sequences in your subsetted files are: {nr_of_seqs_fout}')
 
 if __name__ == "__main__":
 	main()

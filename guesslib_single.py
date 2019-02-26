@@ -1,6 +1,9 @@
 import subprocess
 import csv
 import argparse
+import time
+import numpy as np
+import scipy.stats as stats
 
 ###--------- GLOBAL VARIABLES ---------###
 
@@ -8,40 +11,64 @@ import argparse
 # that sequences should be aligned from.
 START_FROM_SEQUENCE_NR = 0
 
-# Specify from how many paired alignments data
-# should be collected from.
-NR_OF_PAIRS = 2
+# Specify from how many alignments that data
+# should be collected from at the least.
+NR_OF_READS = 1
 
 # Specify the maximum nr of alignments to perform before giving up on determining
 # the library type
-MAX_BLATS = 200
+MAX_BLATS = 1000
+
+# Specify the significance threshold for the p-values.
+SIGNIFICANT_P = 0.001
+
+# Dictionary of the different library types.
+LIB_TYPE_DICT = {
+	0 : "SF",
+	1 : "SR",
+	2 : "U"
+}
+
+###--------- TRAINING STATS ---------###
+
+# This array contains typical data of an unstranded paired library
+# First element represents forwards, the second one is 'other types'
+UNSTRANDED_DATA = ([500,500])
+
+# This array contains typical data of a stranded paired library
+# First element represents forwards or reverses, the second one is 'other types'
+STRANDED_DATA = ([995, 2])
 
 ###--------- FUNCTIONS ---------###
 
 def guesslib_single(ref, user_transcripts):
 	'''
-	Finds NR_OF_PAIRS pairs and
+	Finds NR_OF_READS pairs and
 	determines if the library is forward, reverse or unstranded
 	'''
 
 	# Initializing variables
-	collected_reads = 0
-	read_start = START_FROM_SEQUENCE_NR * 4
-	forward = 0
-	reverse = 0
+	start_time = time.time()
 	# Naming tmp fasta file according to input file name
 	tmp_fasta = "tmp/tmp_blat_inpt_" + user_transcripts
-	seqs_searched = 0
 	lib_type = "N/A"
 	succesful_lib_determination = False
+	read_start = START_FROM_SEQUENCE_NR * 4
+	seqs_searched = 0
+	collected_reads = 0
+	forward = 0
+	reverse = 0
+	p_value = 0.99
 
 	with open (user_transcripts) as f_in:
 		for i in range(read_start): # Skipping to START_FROM_SEQUENCE_NR
 			next(f_in)
-		while (collected_reads < NR_OF_PAIRS and seqs_searched < MAX_BLATS):
+		while ((collected_reads < NR_OF_READS or p_value > SIGNIFICANT_P)
+			and seqs_searched < MAX_BLATS):
 			read_type = "N/A"
 			nr_of_results = 0
 
+			print(f"Collected reads: {collected_reads}. Collecting at least {NR_OF_READS} reads.")
 			write_tmp_fasta(tmp_fasta, f_in)
 			(seq_start, seq_end, nr_of_results,
 				ref_transcript_id) = run_blat(ref, tmp_fasta)
@@ -54,42 +81,56 @@ def guesslib_single(ref, user_transcripts):
 				elif (read_type == "R"):
 					reverse += 1
 				collected_reads += 1
-				print("Collected reads: " + str(collected_reads) + "\n")
+
+				if (collected_reads > (NR_OF_READS-1)):
+					(lib_type,
+						p_value) = get_libtype_and_pvalue(forward, reverse,
+															collected_reads)
 
 	subprocess.run(['rm', tmp_fasta]) # Removing the tmp FASTA file
 
-	if (seqs_searched == MAX_BLATS):
-		print(f'Could not determine library type\n'
-			f'Tried to align {MAX_BLATS} sequences'
-			f' of which {collected_reads} aligned according to the criteria')
+	if (seqs_searched == MAX_BLATS or lib_type == "N/A"):
+		print(f'Guesslib could not determine the library type.\n'
+			f'Tried to align {MAX_BLATS} sequences. With this, '
+			f'{collected_reads} reads were collected.\n'
+			f'Possibly, the wrong reference sequence was used.')
 	else:
-		lib_type = determine_lib_type(forward, reverse)
 		succesful_lib_determination = True
+
+		print(f'\nThe library type determination was succesful\n'
+			f'Forwards: {forward}, reverses: {reverse}, '
+			f'The most likely lib type is {lib_type}.')
+
+	end_time = time.time()
+	analysis_time = round(((end_time - start_time)/60), 2)
+	print(f'Guesslib took {analysis_time} min to do the analysis.')
 	
-	return lib_type, forward, reverse, succesful_lib_determination
+	return (lib_type, forward, reverse, collected_reads,
+			succesful_lib_determination, analysis_time)
 
-def determine_lib_type(forward, reverse):
+def get_libtype_and_pvalue(forward, reverse, collected_reads):
 	'''
-	This function determines the library type, based on
-	the number of forward reads in relation to the
-	number of reverse reads.
+	This function calculates exact p-values for the library types and
+	returns the most likely library type and the p-value of data against the
+	second to most likely library type.
 	'''
 
-	if (reverse == 0):
-		ratio_F_over_R = 9
-	else:
-		ratio_F_over_R = (forward/reverse)
-	if (ratio_F_over_R > 8):
-	    lib_type = 'SF'
-	elif (ratio_F_over_R < (1/8)):
-	    lib_type = 'SR'
-	else:
-	    lib_type = 'U'
+	p_values = []
 
-	print(f'The lib type is {lib_type}.'
-			f' Nr of forwards: {forward}. Nr of reverse: {reverse}.')
+	p_values.append(stats.fisher_exact([STRANDED_DATA, [forward, collected_reads-forward]])[1])
+	p_values.append(stats.fisher_exact([STRANDED_DATA, [reverse, collected_reads-reverse]])[1])
+	p_values.append(stats.fisher_exact([UNSTRANDED_DATA, [forward, collected_reads-forward]])[1])
 
-	return (lib_type)
+	p_value = sorted(p_values, reverse=True)[1] # This is the second to highest p_value.
+
+	lib_type = LIB_TYPE_DICT.get(p_values.index(max(p_values)))
+	
+	print(f'The list of p-values ["SF", "SR", "U"] = {p_values}\n'
+		f'The library type appears to be: {lib_type}.\n'
+		f'The second to highest p-value is: {p_value}\n') 
+
+	return lib_type, p_value
+
 
 def orientation_analysis(seq_start, seq_end):
 	'''
@@ -98,13 +139,13 @@ def orientation_analysis(seq_start, seq_end):
 
 	read_type = "N/A"
 
-	print(f'The read start and end is ({seq_start}, {seq_end})')
+	print(f'The read start and end is ({seq_start}, {seq_end}).')
 	if (seq_start < seq_end):
 		read_type = "F"
-		print("The read type is F")
+		print("The read type is F.\n")
 	elif (seq_start > seq_end):
 		read_type = "R"
-		print("The read type is R")
+		print("The read type is R.\n")
 
 	return read_type
 
@@ -123,10 +164,12 @@ def write_tmp_fasta(tmp_fasta, fastq):
 		next(fastq)
 
 def run_blat(ref, seq):
-    ''' This function calls blat with a single sequence seq.fa as
-        input against the reference ref.fa and returns seq_identity,
-        seq_start, seq_end'''
-
+    '''
+    This function calls blat with a single sequence seq.fa as
+    input against the reference ref.fa and returns seq_identity,
+    seq_start, seq_end
+    '''
+        
     nr_of_results = 0
     seq_identity = "0"
     seq_start = "0"
@@ -137,9 +180,10 @@ def run_blat(ref, seq):
     tmp_rslt = seq + "_rslt"
     ref = 'reference_sequences/' + ref
 
+    # Blatting, and creating tmp blat result file
     subprocess.run(['./blat', ref, seq, '-out=blast8', tmp_rslt])
-    for line in open(tmp_rslt):
-        nr_of_results += 1
+    for line in open(tmp_rslt, 'r'):
+        nr_of_results += 1 # Each row represents an alignment
     if (nr_of_results > 0):
         with open(tmp_rslt, 'r') as f_in:
             first_hit = next(csv.reader(f_in, delimiter='\t'))
@@ -157,28 +201,24 @@ def run_blat(ref, seq):
     print(f'the seq start is: {seq_start}')
     print(f'the seq end is: {seq_end}')
     print(f"the second hit's E value is: {second_hit_e_value}")
-    print(f'the reference transcript id is {ref_transcript_id}')
+    print(f'the reference transcript id is: {ref_transcript_id}')
     print(f'the number of results for this blat is: {nr_of_results}\n')
 
-    subprocess.run(['rm', tmp_rslt]) # Removing the tmp blast-rslt file
+    subprocess.run(['rm', tmp_rslt]) # Removing the tmp blat rslt file
 
     return (int(seq_start), int(seq_end),
             nr_of_results, ref_transcript_id)
 
-###--- MAIN ---###
+###--------- MAIN ---------###
 
 def main():
 	
 	parser = argparse.ArgumentParser()
 	parser.add_argument("-r", "--reference", required=True, help="reference sequence")
-	parser.add_argument("-f", "--user_transcripts", required=True, help="FASTQ file one")
+	parser.add_argument("-f", "--user_transcripts", required=True, help="FASTQ library")
 	args = parser.parse_args()
 
-	if not len(vars(args)) == 2:
-		print("Specify the fastq file and reference library")
-
-	else:
-		guesslib_single(args.reference, args.user_transcripts)
+	guesslib_single(args.reference, args.user_transcripts)
 
 if __name__ == "__main__":
 	main()

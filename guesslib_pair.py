@@ -1,20 +1,53 @@
 import subprocess
 import csv
 import argparse
+import time
+import numpy as np
+import scipy.stats as stats
 
 ###--------- GLOBAL VARIABLES ---------###
 
 # Specify from what line of the user's transcripts
-# that sequences should be aligned from.
-START_FROM_SEQUENCE_NR = 0
+# that sequences should be aligned from. Index from zero.
+START_FROM_SEQUENCE_NR = 3
 
 # Specify from how many paired alignments data
 # should be collected from.
-NR_OF_PAIRS = 10
+NR_OF_PAIRS = 1
 
 # Specify the maximum nr of alignments to perform before giving up on determining
 # the library type.
-MAX_BLATS = 1000
+MAX_BLATS = 3
+
+# Specify the significance threshold for the p-values.
+SIGNIFICANT_P = 0.001
+
+# Dictionary of the different library types.
+LIB_TYPE_DICT = {
+	0 : "SF",
+	1 : "SR",
+	2 : "U"
+}
+
+###--------- TRAINED STATS ---------###
+
+# This array contains typical data of an inwards library, the first element
+# is the nr of reads that were inward oriented, the second is the total
+# nr of collected pairs
+INWARD_DATA = ([1000, 5])
+
+# This array contains typical data of an outwards library, the first element
+# is the nr of reads that were outward oriented, the second is the total
+# nr of collected pairs
+OUTWARD_DATA = ([900, 100])
+
+# This array contains typical data of an unstranded paired library
+# First element represents forwards, the second one is 'other types'
+PAIRED_UNSTRANDED_DATA = ([500,502])
+
+# This array contains typical data of a stranded paired library
+# First element represents forwards or reverses, the second one is 'other types'
+PAIRED_STRANDED_DATA = ([995, 5])
 
 ###--------- FUNCTIONS ---------###
 
@@ -25,6 +58,7 @@ def guesslib_pair(ref, user_transcripts_f1, user_transcripts_f2):
 	'''
 
 	# Initializing variables
+	start_time = time.time()
 	# Naming tmp fasta file according to input file name
 	tmp_fasta_1 = "tmp/tmp_blat_inpt_1_" + user_transcripts_f1
 	lib_type = "N/A"
@@ -36,15 +70,19 @@ def guesslib_pair(ref, user_transcripts_f1, user_transcripts_f2):
 	o_and_r = 0
 	i_and_f = 0
 	i_and_r = 0
-	invalid_orientation_strand = 0
+	invalid_orientation = 0
+	p_value = 0.99
 
 	with open (user_transcripts_f1) as f_in:
 		for i in range(read_start): # Skipping to START_FROM_SEQUENCE_NR
 			next(f_in)
-		while (collected_pairs < NR_OF_PAIRS and seqs_searched < MAX_BLATS):
+		while ((collected_pairs < NR_OF_PAIRS or p_value > SIGNIFICANT_P)
+			and seqs_searched < MAX_BLATS):
 			pair_type = "N/A" # Resetting variables for new search
-			nr_of_results = 0
+			nr_of_results_R1 = 0
+			nr_of_results_R2 = 0
 
+			print(f"Collected pairs: {collected_pairs}. Collecting at least {NR_OF_PAIRS} pairs.")
 			seq_id_R1 = write_tmp_fasta(tmp_fasta_1, f_in)
 			(seq_start_R1, seq_end_R1, nr_of_results_R1,
 				ref_transcript_id_R1) = run_blat(ref, tmp_fasta_1)
@@ -56,15 +94,14 @@ def guesslib_pair(ref, user_transcripts_f1, user_transcripts_f2):
                                                 user_transcripts_f2,
                                                 seq_id_R1)
 
-				if (nr_of_results_R1 == 1 and ref_transcript_id_R1 == ref_transcript_id_R2):
+				if (nr_of_results_R2 == 1 and ref_transcript_id_R1 == ref_transcript_id_R2):
 					pair_type = pair_analysis(seq_start_R1,
 				                                seq_end_R1,
 				                                seq_start_R2,
 				                                seq_end_R2)
 					collected_pairs += 1
-					print("Collected pairs: " + str(collected_pairs))
-
-					# Increment corresponding pair type
+				
+					# Incrementing corresponding pair type
 					if (pair_type == "OF"):
 						o_and_f += 1
 						print("Added to OF.")
@@ -78,87 +115,126 @@ def guesslib_pair(ref, user_transcripts_f1, user_transcripts_f2):
 						i_and_r += 1
 						print("Added to IR.")
 					else:
-						invalid_orientation_strand += 1
-						print("Added to none of them.")
+						invalid_orientation += 1
+						print("Added to invalid orientation.")
+
+					if (collected_pairs > NR_OF_PAIRS-1):
+						(lib_type,
+							p_value) = get_libtype_and_pvalue(o_and_f, o_and_r,
+																i_and_f, i_and_r,
+																collected_pairs)
 
 	subprocess.run(['rm', tmp_fasta_1]) # Removing the tmp FASTA file
 
-	if (seqs_searched == MAX_BLATS):
-		print(f'Could not determine library type\n'
-			f'Tried to align {MAX_BLATS} sequences'
-			f' of which {collected_pairs} pairs were collected')
+	if (seqs_searched == MAX_BLATS or lib_type == "N/A"):
+		print(f'Guesslib could not determine the library type.\n'
+			f'Tried to align {MAX_BLATS} sequences. With this, '
+			f'{collected_pairs} pairs were collected.\n'
+			f'Possibly, the wrong reference sequence was used.')
 	else:
-		lib_type = determine_lib_type(o_and_f, o_and_r, i_and_f, i_and_r)
 		succesful_lib_determination = True
 
 		print(f'\nThe library type determination was succesful\n'
-			f'OF: {o_and_f}, OR: {o_and_r}'
-			f'IF: {i_and_f}, IR: {i_and_r}, neither: {invalid_orientation_strand}.\n'
+			f'OF: {o_and_f}, OR: {o_and_r}, '
+			f'IF: {i_and_f}, IR: {i_and_r}, '
+			f'Neither: {invalid_orientation}.\n'
 			f'The most likely lib type is {lib_type}.')
 
-	return (lib_type, o_and_f, o_and_r, i_and_f, i_and_r, succesful_lib_determination)
+	end_time = time.time()
+	analysis_time = round(((end_time - start_time)/60), 2)
 
+	print(f'Guesslib took {analysis_time} min to do the analysis.')
 
-def determine_lib_type(o_and_f, o_and_r, i_and_f, i_and_r):
+	return (lib_type, o_and_f, o_and_r, i_and_f, i_and_r, collected_pairs,
+			succesful_lib_determination, analysis_time)
+
+def get_libtype_and_pvalue(o_and_f, o_and_r, i_and_f, i_and_r, collected_pairs):
 	'''
-	This function determines the library type, based on
-	the number of inward-forward, inward-reverse outward-forward and
-	outward-reverse reads.
+	This function makes a decision about the 
+	library types based on the nr of different pair types.
 	'''
 
 	lib_type = "N/A"
+	strandedness_p_values = []
+	p_value = 0.99
 
-	if ((i_and_r + i_and_f) > (o_and_r + o_and_f)):
-		if (i_and_r == 0):
-			ratio_IF_over_IR = 9
-		else:
-			ratio_IF_over_IR = (i_and_f/i_and_r)
-		if (ratio_IF_over_IR > 8):
-			lib_type = 'ISF'
-		elif (ratio_IF_over_IR < (1/8)):
-			lib_type = 'ISR'
-		else:
-			lib_type = 'IU'
-	if ((i_and_r+i_and_f) < (o_and_r+o_and_f)):
-		if (o_and_r == 0):
-			ratio_OF_over_OR = 9
-		else:
-			ratio_OF_over_OR = (o_and_f/o_and_r)
-		if (ratio_OF_over_OR > 8):
-			lib_type = 'OSF'
-		elif (ratio_OF_over_OR < (1/8)):
-			lib_type = 'OSR'
-		else:
-			lib_type = 'UO'
+	# First we check inward, outward orientation
+	inwards = i_and_f + i_and_r
+	outwards = o_and_f + o_and_r
 
-	return lib_type
+	inward_p_val = stats.fisher_exact([INWARD_DATA,
+			[inwards, collected_pairs-inwards]])[1]
+	outward_p_val = stats.fisher_exact([OUTWARD_DATA,
+			[outwards, collected_pairs-outwards]])[1]
+	print("The p-value corresponding to an inward library: " + str(inward_p_val))
+	print("The p-value corresponding to an outward library: " + str(outward_p_val) + "\n")
+
+	# Then we check strandedness
+	# If inward we check strandedness for inward:
+	if (outward_p_val < SIGNIFICANT_P and inward_p_val > 0.5):
+		strandedness_p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
+			[i_and_f, collected_pairs-i_and_f]])[1])
+		strandedness_p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
+			[i_and_r, collected_pairs-i_and_r]])[1])
+		strandedness_p_values.append(stats.fisher_exact([PAIRED_UNSTRANDED_DATA,
+			[i_and_f, collected_pairs-i_and_f]])[1])
+
+		# This is the second to highest p_value.
+		p_value = sorted(strandedness_p_values, reverse=True)[1] 
+		# Retrieving orientation corresponding to highest p_val, from dictionary
+		lib_type = "I" + LIB_TYPE_DICT.get(strandedness_p_values.index(max(strandedness_p_values))) 
+
+		print(f'The list of p-values ["SF", "SR", "U",] = {strandedness_p_values}\n'
+		f'The library type appears to be: {lib_type}.\n'
+		f'The second to highest p-value is: {p_value}')
+
+	# If outward we check strandedness for outward:
+	elif (inward_p_val < SIGNIFICANT_P and outward_p_val > 0.5):
+		strandedness_p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
+			[o_and_f, collected_pairs-o_and_f]])[1])
+		strandedness_p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
+			[o_and_r, collected_pairs-o_and_r]])[1])
+		strandedness_p_values.append(stats.fisher_exact([PAIRED_UNSTRANDED_DATA,
+			[o_and_f, collected_pairs-o_and_f]])[1])
+
+		# This is the second to highest p_value.
+		p_value = sorted(strandedness_p_values, reverse=True)[1] 
+		# Retrieving orientation corresponding to highest p_val, from dictionary
+		lib_type = "O" + LIB_TYPE_DICT.get(strandedness_p_values.index(max(strandedness_p_values)))
+
+		print(f'The list of p-values ["SF", "SR", "U"] = {strandedness_p_values}\n'
+		f'The library type appears to be: {lib_type}.\n'
+		f'The second to highest p-value is: {p_value}\n')
+
+	return lib_type, p_value
 
 
 def pair_analysis(seq_start_R1, seq_end_R1, seq_start_R2, seq_end_R2):
-    '''
-    This function determines inward or outward and reverse
-    or forward orientation based on the input of two reads.
-    '''
+	'''
+	This function determines inward or outward and reverse
+	or forward orientation based on the input of two reads.
+	'''
 
-    pair_type = "N/A"
+	pair_type = "N/A"
 
-    distance_r2_r1 = (((seq_start_R2 + seq_end_R2)/2) -
-                    ((seq_start_R1 + seq_end_R1)/2))
+	# This is the distance between the reads' midpoints, but it can be negative
+	distance_r2_r1 = (((seq_start_R2 + seq_end_R2)/2) -
+						((seq_start_R1 + seq_end_R1)/2))
 
-    if (seq_start_R1 < seq_end_R1 and seq_start_R2 > seq_end_R2):
-        if (distance_r2_r1 > 0 and distance_r2_r1 < 1000):
-            pair_type = "IF" #
-        elif (distance_r2_r1 < -750):
-            pair_type = "OF"
-    elif (seq_start_R1 > seq_end_R1 and seq_start_R2 < seq_end_R2):
-        if (distance_r2_r1 < 0 and distance_r2_r1 > -1000):
-            pair_type = "IR"
-        elif (distance_r2_r1 > 750):
-            pair_type = "OR"
+	if (seq_start_R1 < seq_end_R1 and seq_start_R2 > seq_end_R2): # If R1 is F and R2 is R
+		if (seq_start_R1 < seq_start_R1): # If R1 starts upstream of R2
+			pair_type = "IF"
+		elif (seq_start_R1 > seq_start_R2): # If R1 starts downstream of R2
+			pair_type = "OF"
+	elif (seq_start_R1 > seq_end_R1 and seq_start_R2 < seq_end_R2): # IF R1 is R and R2 is F
+		if (seq_start_R1 > seq_start_R2): # If R1 starts downstream of R2
+			pair_type = "IR"
+		elif (seq_start_R1 < seq_start_R2): # If R1 starts upstream of R2
+			pair_type = "OR"
 
-    print(f'(Avg of R2) - (Avg of R1) is: {distance_r2_r1}')
+	print(f'(Midpoint of R2) - (Midpoint of R1) is: {distance_r2_r1}')
 
-    return pair_type
+	return pair_type
 
 def blat_corresponding_seq_in_f2(ref, user_transcripts, seq_id_R1):
     '''
@@ -173,17 +249,18 @@ def blat_corresponding_seq_in_f2(ref, user_transcripts, seq_id_R1):
     tmp_in_2 = "tmp/tmp_blat_inpt_2_" + user_transcripts # Naming temp fasta file
 
     with open(user_transcripts) as f_in:
-        first_line = '>' + f_in.readline()[1:]
+        first_line = '>' + f_in.readline()[1:] # First line of FASTA file
         seq_id_R2 = first_line.split(" ")[0]
 
-        while (seq_id_R2 != seq_id_R1 and iterations < 1000):
+        while (seq_id_R2 != seq_id_R1): # Looking for match to seq_id_R1
             next(f_in)
             next(f_in)
             next(f_in)
-            first_line = '>' + f_in.readline()[1:]
+            first_line = '>' + f_in.readline()[1:] # First line of FASTA
             seq_id_R2 = first_line.split(" ")[0]
             iterations += 1
 
+        # Writing out tmp FASTA
         with open(tmp_in_2, "w+") as f_out:
             f_out.write(first_line)
             f_out.write(f_in.readline())
@@ -229,9 +306,10 @@ def run_blat(ref, seq):
     tmp_rslt = seq + "_rslt"
     ref = 'reference_sequences/' + ref
 
+    # Blatting, and creating tmp blat result file
     subprocess.run(['./blat', ref, seq, '-out=blast8', tmp_rslt])
-    for line in open(tmp_rslt):
-        nr_of_results += 1
+    for line in open(tmp_rslt, 'r'):
+        nr_of_results += 1 # Each row represents an alignment
     if (nr_of_results > 0):
         with open(tmp_rslt, 'r') as f_in:
             first_hit = next(csv.reader(f_in, delimiter='\t'))
@@ -249,7 +327,7 @@ def run_blat(ref, seq):
     print(f'the seq start is: {seq_start}')
     print(f'the seq end is: {seq_end}')
     print(f"the second hit's E value is: {second_hit_e_value}")
-    print(f'the reference transcript id is {ref_transcript_id}')
+    print(f'the reference transcript id is: {ref_transcript_id}')
     print(f'the number of results for this blat is: {nr_of_results}\n')
 
     subprocess.run(['rm', tmp_rslt]) # Removing the tmp blat rslt file
@@ -263,15 +341,11 @@ def main():
 	
 	parser = argparse.ArgumentParser()
 	parser.add_argument("-r", "--reference", required=True, help="reference sequence")
-	parser.add_argument("-f1", "--file_1", required=True, help="FASTQ file one")
-	parser.add_argument("-f2", "--file_2", required=True, help="corresponding FASTQ of paired sequences")
+	parser.add_argument("-f1", "--file_1", required=True, help="FASTQ with read 1 sequences")
+	parser.add_argument("-f2", "--file_2", required=True, help="FASTQ with paired read 2 sequences")
 	args = parser.parse_args()
 
-	if not len(vars(args)) == 3:
-		print("Specify the file 2 fastq files and reference library")
-
-	else:
-		guesslib_pair(args.reference, args.file_1, args.file_2)
-
+	guesslib_pair(args.reference, args.file_1, args.file_2)
+		
 if __name__ == "__main__":
 	main()
