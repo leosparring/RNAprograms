@@ -59,7 +59,7 @@ def check_format_and_remove_low_quality_reads_pair(fastq_file_1, fastq_file_2):
 			with open(fastq_file_1) as fin_1, open(fastq_file_2) as fin_2:
 				counter = 0
 				for line in fin_1:
-					if (counter % 4 == 0): # Reading first line in f1 and f2
+					if (counter % 4 == 0): # Reading first line of seq in f1 and f2
 						first_line_f1 = line
 						first_line_f2 = fin_2.readline()
 					if (counter % 4 == 1): # Reading second line in f1 and f2
@@ -71,33 +71,33 @@ def check_format_and_remove_low_quality_reads_pair(fastq_file_1, fastq_file_2):
 					if (counter % 4 == 3): # Reading fourth line in f1 and f2
 						fourth_line_f1 = line
 						fourth_line_f2 = fin_2.readline()
+						if first_line_f1 not in seq_ids:  # Making sure we haven't added the seq already
 						# Calculating the quality of the sequences
-						phred_quality_f1 = calculate_phred_quality(fourth_line_f1)
-						phred_quality_f2 = calculate_phred_quality(fourth_line_f2)
-						if first_iteration:
-							# Calculating the average quality of the in file seqs
-							fin1_avg_quality += phred_quality_f1
-							fin2_avg_quality += phred_quality_f2
-							nr_of_seqs_fin += 1
-						if (phred_quality_f1 > quality_threshold and phred_quality_f2 > quality_threshold
-							and first_line_f1 not in seq_ids): # Making sure we haven't
-							seq_ids.append(first_line_f1)		# already added the seq
-							# Calculating the average quality of the out file seqs
-							fout1_avg_quality += phred_quality_f1
-							fout2_avg_quality += phred_quality_f2
-							nr_of_seqs_fout += 1
-							with open(pairchecked_f1, "a") as fout_1: # Appending
-								fout_1.write(first_line_f1)			# the sequence to
-								fout_1.write(second_line_f1)		# outfile 1
-								fout_1.write(third_line_f1)
-								fout_1.write(fourth_line_f1)
-							with open(pairchecked_f2, 'a') as fout_2: # Appending the
-								fout_2.write(first_line_f2)				# sequence to
-								fout_2.write(second_line_f2)			# outfile 2
-								fout_2.write(third_line_f2)
-								fout_2.write(fourth_line_f2)
-					counter += 1
-
+							phred_quality_f1 = calculate_phred_quality(fourth_line_f1)
+							phred_quality_f2 = calculate_phred_quality(fourth_line_f2)
+							if first_iteration:
+								# Calculating the average quality of the in file seqs
+								fin1_avg_quality += phred_quality_f1
+								fin2_avg_quality += phred_quality_f2
+								nr_of_seqs_fin += 1
+							if (phred_quality_f1 > quality_threshold and phred_quality_f2 > quality_threshold):
+								seq_ids.append(first_line_f1)
+								# Calculating the average quality of the out file seqs
+								fout1_avg_quality += phred_quality_f1
+								fout2_avg_quality += phred_quality_f2
+								nr_of_seqs_fout += 1
+								with open(pairchecked_f1, "a") as fout_1: # Appending
+									fout_1.write(first_line_f1)			# the sequence to
+									fout_1.write(second_line_f1)		# outfile 1
+									fout_1.write(third_line_f1)
+									fout_1.write(fourth_line_f1)
+								with open(pairchecked_f2, 'a') as fout_2: # Appending the
+									fout_2.write(first_line_f2)				# sequence to
+									fout_2.write(second_line_f2)			# outfile 2
+									fout_2.write(third_line_f2)
+									fout_2.write(fourth_line_f2)
+					
+					counter += 1 # Nr of lines read in file1 and file2
 			quality_threshold = quality_threshold - 1 # Lowering quality
 			first_iteration = False						# for next iteration
 

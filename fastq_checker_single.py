@@ -95,32 +95,33 @@ def check_format_and_remove_low_quality_reads_single(fastq_file):
 			with open(fastq_file) as f_in:
 				counter = 0
 				for line in f_in:
-					if (counter % 4 == 0):
+					if (counter % 4 == 0): # Reading the first line of seq
 						first_line = line
-					if (counter % 4 == 1):
+					if (counter % 4 == 1): # Reading the second line
 						second_line = line
-					if (counter % 4 == 2):
+					if (counter % 4 == 2): # Reading the third line
 						third_line = line
-					if (counter % 4 == 3):
+					if (counter % 4 == 3): # Reading th quality line
 						fourth_line = line
-						phred_quality = calculate_phred_quality(fourth_line)
-						if first_iteration:
-							fin_avg_quality += phred_quality
-							nr_of_seqs_fin += 1
-						if (phred_quality > quality_threshold
-							and first_line not in seq_ids):
-							seq_ids.append(first_line)
-							fout_avg_quality += phred_quality
-							nr_of_sequences_out += 1
-							with open(q_fastq_file, "a") as f_out: 
-								f_out.write(first_line)
-								f_out.write(second_line)
-								f_out.write(third_line)
-								f_out.write(fourth_line)
-					
-					counter += 1
-			quality_threshold = quality_threshold - 1
-			first_iteration = False
+						if (first_line not in seq_ids):
+							phred_quality = calculate_phred_quality(fourth_line)
+							if first_iteration:
+								# Calculating the avg quality, the first loop
+								fin_avg_quality += phred_quality
+								nr_of_seqs_fin += 1
+							if (phred_quality > quality_threshold):
+								seq_ids.append(first_line) # adding to seq_ids
+								fout_avg_quality += phred_quality
+								nr_of_sequences_out += 1
+								with open(q_fastq_file, "a") as f_out: 
+									f_out.write(first_line)
+									f_out.write(second_line)
+									f_out.write(third_line)
+									f_out.write(fourth_line)
+						
+					counter += 1 # Nr of lines read in the file
+			quality_threshold = quality_threshold - 1 # Reducing quality threshold for 
+			first_iteration = False 					# next iteration
 
 		fin_avg_quality = fin_avg_quality / nr_of_seqs_fin
 		fout_avg_quality = fout_avg_quality / nr_of_sequences_out

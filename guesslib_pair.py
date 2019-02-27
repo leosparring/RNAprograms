@@ -104,19 +104,19 @@ def guesslib_pair(ref, user_transcripts_f1, user_transcripts_f2):
 					# Incrementing corresponding pair type
 					if (pair_type == "OF"):
 						o_and_f += 1
-						print("Added to OF.")
+						print("Added to OF.\n")
 					elif (pair_type == "OR" ):
 						o_and_r += 1
-						print("Added to OR.")
+						print("Added to OR.\n")
 					elif (pair_type == "IF"):
 						i_and_f += 1
-						print("Added to IF.")
+						print("Added to IF.\n")
 					elif (pair_type == "IR"):
 						i_and_r += 1
-						print("Added to IR.")
+						print("Added to IR.\n")
 					else:
 						invalid_orientation += 1
-						print("Added to invalid orientation.")
+						print("Added to invalid orientation.\n")
 
 					if (collected_pairs > NR_OF_PAIRS-1):
 						(lib_type,
