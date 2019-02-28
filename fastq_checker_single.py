@@ -26,26 +26,33 @@ def proper_fastq_format(fastq_file):
 	fastq_decision = 0
 	counter = 0
 
-	with open(fastq_file) as f_in:
-		for line in f_in:
-			if (counter % 4 == 0): # Checking first line
-				if (line.startswith('@')):
-					fastq_decision += 1
-			if (counter % 4 == 1): # Checking second line
-				second_line = line
-				if all(c in 'ATGCNatgcn\n' for c in list(line)):
-					fastq_decision += 1
-			if (counter % 4 == 2): # Checking third line
-				if (line.startswith('+')):
-					fastq_decision += 1
-			if (counter % 4 == 3): # Checking fourth line
-				if (len(line) == len(second_line)):
-					fastq_decision += 1
+	try:
+		with open(fastq_file) as f_in:
+			try:
+				for line in f_in:
+					if (counter % 4 == 0): # Checking first line
+						if (line.startswith('@')):
+							fastq_decision += 1
+					if (counter % 4 == 1): # Checking second line
+						second_line = line
+						if all(c in 'ATGCNatgcn\n' for c in list(line)):
+							fastq_decision += 1
+					if (counter % 4 == 2): # Checking third line
+						if (line.startswith('+')):
+							fastq_decision += 1
+					if (counter % 4 == 3): # Checking fourth line
+						if (len(line) == len(second_line)):
+							fastq_decision += 1
+					counter += 1
+				if (fastq_decision == counter):
+					proper_fastq_format = True
 
-			counter += 1
-
-	if (fastq_decision == counter):
-		proper_fastq_format = True
+			except UnicodeDecodeError:
+				fastq_format = False
+				print("You had a UnicodeDecodeError.")
+	except IOError:
+		fastq_format = False
+		print("You had an IOError.")
 
 	return proper_fastq_format
 

@@ -9,18 +9,23 @@ import scipy.stats as stats
 
 # Specify from what line of the user's transcripts
 # that sequences should be aligned from. Index from zero.
-START_FROM_SEQUENCE_NR = 3
+START_FROM_SEQUENCE_NR = 0
 
 # Specify from how many paired alignments data
 # should be collected from.
-NR_OF_PAIRS = 1
+NR_OF_PAIRS = 1000
 
 # Specify the maximum nr of alignments to perform before giving up on determining
 # the library type.
-MAX_BLATS = 3
+MAX_BLATS = 1000
 
 # Specify the significance threshold for the p-values.
-SIGNIFICANT_P = 0.001
+SIGNIFICANT_P = 0.01
+
+# Specify the significance threshold for p_value corresponding to
+# the null hypotheses that we want to be true. collected data looks
+# like corresponding trained data.
+NULL_P = 0.01
 
 # Dictionary of the different library types.
 LIB_TYPE_DICT = {
@@ -73,56 +78,60 @@ def guesslib_pair(ref, user_transcripts_f1, user_transcripts_f2):
 	invalid_orientation = 0
 	p_value = 0.99
 
-	with open (user_transcripts_f1) as f_in:
-		for i in range(read_start): # Skipping to START_FROM_SEQUENCE_NR
-			next(f_in)
-		while ((collected_pairs < NR_OF_PAIRS or p_value > SIGNIFICANT_P)
-			and seqs_searched < MAX_BLATS):
-			pair_type = "N/A" # Resetting variables for new search
-			nr_of_results_R1 = 0
-			nr_of_results_R2 = 0
+	try:
+		with open (user_transcripts_f1) as f_in:
+			for i in range(read_start): # Skipping to START_FROM_SEQUENCE_NR
+				next(f_in)
+			while ((collected_pairs < NR_OF_PAIRS or p_value > SIGNIFICANT_P)
+				and seqs_searched < MAX_BLATS):
+				pair_type = "N/A" # Resetting variables for new search
+				nr_of_results_R1 = 0
+				nr_of_results_R2 = 0
 
-			print(f"Collected pairs: {collected_pairs}. Collecting at least {NR_OF_PAIRS} pairs.")
-			seq_id_R1 = write_tmp_fasta(tmp_fasta_1, f_in)
-			(seq_start_R1, seq_end_R1, nr_of_results_R1,
-				ref_transcript_id_R1) = run_blat(ref, tmp_fasta_1)
-			seqs_searched += 1
+				print(f"Collected pairs: {collected_pairs}. Collecting at least {NR_OF_PAIRS} pairs.")
+				seq_id_R1 = write_tmp_fasta(tmp_fasta_1, f_in)
+				(seq_start_R1, seq_end_R1, nr_of_results_R1,
+					ref_transcript_id_R1) = run_blat(ref, tmp_fasta_1)
+				seqs_searched += 1
 
-			if (nr_of_results_R1 == 1):
-				(seq_start_R2, seq_end_R2, nr_of_results_R2,
-            		ref_transcript_id_R2) = blat_corresponding_seq_in_f2(ref,
-                                                user_transcripts_f2,
-                                                seq_id_R1)
+				if (nr_of_results_R1 == 1):
+					(seq_start_R2, seq_end_R2, nr_of_results_R2,
+	            		ref_transcript_id_R2) = blat_corresponding_seq_in_f2(ref,
+	                                                user_transcripts_f2,
+	                                                seq_id_R1)
 
-				if (nr_of_results_R2 == 1 and ref_transcript_id_R1 == ref_transcript_id_R2):
-					pair_type = pair_analysis(seq_start_R1,
-				                                seq_end_R1,
-				                                seq_start_R2,
-				                                seq_end_R2)
-					collected_pairs += 1
-				
-					# Incrementing corresponding pair type
-					if (pair_type == "OF"):
-						o_and_f += 1
-						print("Added to OF.\n")
-					elif (pair_type == "OR" ):
-						o_and_r += 1
-						print("Added to OR.\n")
-					elif (pair_type == "IF"):
-						i_and_f += 1
-						print("Added to IF.\n")
-					elif (pair_type == "IR"):
-						i_and_r += 1
-						print("Added to IR.\n")
-					else:
-						invalid_orientation += 1
-						print("Added to invalid orientation.\n")
+					if (nr_of_results_R2 == 1 and ref_transcript_id_R1 == ref_transcript_id_R2):
+						pair_type = pair_analysis(seq_start_R1,
+					                                seq_end_R1,
+					                                seq_start_R2,
+					                                seq_end_R2)
+						collected_pairs += 1
+					
+						# Incrementing corresponding pair type
+						if (pair_type == "OF"):
+							o_and_f += 1
+							print("Added to OF.\n")
+						elif (pair_type == "OR" ):
+							o_and_r += 1
+							print("Added to OR.\n")
+						elif (pair_type == "IF"):
+							i_and_f += 1
+							print("Added to IF.\n")
+						elif (pair_type == "IR"):
+							i_and_r += 1
+							print("Added to IR.\n")
+						else:
+							invalid_orientation += 1
+							print("Added to invalid orientation.\n")
 
-					if (collected_pairs > NR_OF_PAIRS-1):
-						(lib_type,
-							p_value) = get_libtype_and_pvalue(o_and_f, o_and_r,
-																i_and_f, i_and_r,
-																collected_pairs)
+						if (collected_pairs > NR_OF_PAIRS-1):
+							(lib_type,
+								p_value) = get_libtype_and_pvalue(o_and_f, o_and_r,
+																	i_and_f, i_and_r,
+																	collected_pairs)
+
+	except StopIteration:
+		pass
 
 	subprocess.run(['rm', tmp_fasta_1]) # Removing the tmp FASTA file
 
@@ -155,54 +164,47 @@ def get_libtype_and_pvalue(o_and_f, o_and_r, i_and_f, i_and_r, collected_pairs):
 	'''
 
 	lib_type = "N/A"
-	strandedness_p_values = []
+	p_values = []
 	p_value = 0.99
 
 	# First we check inward, outward orientation
 	inwards = i_and_f + i_and_r
 	outwards = o_and_f + o_and_r
 
-	inward_p_val = stats.fisher_exact([INWARD_DATA,
-			[inwards, collected_pairs-inwards]])[1]
-	outward_p_val = stats.fisher_exact([OUTWARD_DATA,
-			[outwards, collected_pairs-outwards]])[1]
-	print("The p-value corresponding to an inward library: " + str(inward_p_val))
-	print("The p-value corresponding to an outward library: " + str(outward_p_val) + "\n")
-
 	# Then we check strandedness
 	# If inward we check strandedness for inward:
-	if (outward_p_val < SIGNIFICANT_P and inward_p_val > 0.5):
-		strandedness_p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
+	if (inwards/collected_pairs > 0.5):
+		p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
 			[i_and_f, collected_pairs-i_and_f]])[1])
-		strandedness_p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
+		p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
 			[i_and_r, collected_pairs-i_and_r]])[1])
-		strandedness_p_values.append(stats.fisher_exact([PAIRED_UNSTRANDED_DATA,
+		p_values.append(stats.fisher_exact([PAIRED_UNSTRANDED_DATA,
 			[i_and_f, collected_pairs-i_and_f]])[1])
 
 		# This is the second to highest p_value.
-		p_value = sorted(strandedness_p_values, reverse=True)[1] 
+		p_value = sorted(p_values, reverse=True)[1] 
 		# Retrieving orientation corresponding to highest p_val, from dictionary
-		lib_type = "I" + LIB_TYPE_DICT.get(strandedness_p_values.index(max(strandedness_p_values))) 
+		lib_type = "I" + LIB_TYPE_DICT.get(p_values.index(max(p_values))) 
 
-		print(f'The list of p-values ["SF", "SR", "U",] = {strandedness_p_values}\n'
+		print(f'The list of p-values ["SF", "SR", "U",] = {p_values}\n'
 		f'The library type appears to be: {lib_type}.\n'
 		f'The second to highest p-value is: {p_value}')
 
 	# If outward we check strandedness for outward:
-	elif (inward_p_val < SIGNIFICANT_P and outward_p_val > 0.5):
-		strandedness_p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
+	elif (outwards/collected_pairs > 0.5):
+		p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
 			[o_and_f, collected_pairs-o_and_f]])[1])
-		strandedness_p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
+		p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
 			[o_and_r, collected_pairs-o_and_r]])[1])
-		strandedness_p_values.append(stats.fisher_exact([PAIRED_UNSTRANDED_DATA,
+		p_values.append(stats.fisher_exact([PAIRED_UNSTRANDED_DATA,
 			[o_and_f, collected_pairs-o_and_f]])[1])
 
 		# This is the second to highest p_value.
-		p_value = sorted(strandedness_p_values, reverse=True)[1] 
+		p_value = sorted(p_values, reverse=True)[1] 
 		# Retrieving orientation corresponding to highest p_val, from dictionary
-		lib_type = "O" + LIB_TYPE_DICT.get(strandedness_p_values.index(max(strandedness_p_values)))
+		lib_type = "O" + LIB_TYPE_DICT.get(p_values.index(max(p_values)))
 
-		print(f'The list of p-values ["SF", "SR", "U"] = {strandedness_p_values}\n'
+		print(f'The list of p-values ["SF", "SR", "U"] = {p_values}\n'
 		f'The library type appears to be: {lib_type}.\n'
 		f'The second to highest p-value is: {p_value}\n')
 
@@ -222,7 +224,7 @@ def pair_analysis(seq_start_R1, seq_end_R1, seq_start_R2, seq_end_R2):
 						((seq_start_R1 + seq_end_R1)/2))
 
 	if (seq_start_R1 < seq_end_R1 and seq_start_R2 > seq_end_R2): # If R1 is F and R2 is R
-		if (seq_start_R1 < seq_start_R1): # If R1 starts upstream of R2
+		if (seq_start_R1 < seq_start_R2): # If R1 starts upstream of R2
 			pair_type = "IF"
 		elif (seq_start_R1 > seq_start_R2): # If R1 starts downstream of R2
 			pair_type = "OF"
@@ -308,7 +310,7 @@ def run_blat(ref, seq):
 
     # Blatting, and creating tmp blat result file
     subprocess.run(['./blat', ref, seq, '-out=blast8', tmp_rslt])
-    for line in open(tmp_rslt, 'r'):
+    for line in open(tmp_rslt):
         nr_of_results += 1 # Each row represents an alignment
     if (nr_of_results > 0):
         with open(tmp_rslt, 'r') as f_in:

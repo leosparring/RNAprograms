@@ -13,14 +13,19 @@ START_FROM_SEQUENCE_NR = 0
 
 # Specify from how many alignments that data
 # should be collected from at the least.
-NR_OF_READS = 1
+NR_OF_READS = 10
 
 # Specify the maximum nr of alignments to perform before giving up on determining
 # the library type
 MAX_BLATS = 1000
 
 # Specify the significance threshold for the p-values.
-SIGNIFICANT_P = 0.001
+SIGNIFICANT_P = 0.01
+
+# Specify the significance threshold for p_value corresponding to
+# the null hypotheses that we want to be true. collected data looks
+# like corresponding trained data.
+NULL_P = 0.01
 
 # Dictionary of the different library types.
 LIB_TYPE_DICT = {
@@ -60,33 +65,36 @@ def guesslib_single(ref, user_transcripts):
 	reverse = 0
 	p_value = 0.99
 
-	with open (user_transcripts) as f_in:
-		for i in range(read_start): # Skipping to START_FROM_SEQUENCE_NR
-			next(f_in)
-		while ((collected_reads < NR_OF_READS or p_value > SIGNIFICANT_P)
-			and seqs_searched < MAX_BLATS):
-			read_type = "N/A"
-			nr_of_results = 0
+	try:
+		with open (user_transcripts) as f_in:
+			for i in range(read_start): # Skipping to START_FROM_SEQUENCE_NR
+				next(f_in)
+			while ((collected_reads < NR_OF_READS or p_value > SIGNIFICANT_P)
+				and seqs_searched < MAX_BLATS):
+				read_type = "N/A"
+				nr_of_results = 0
 
-			print(f"Collected reads: {collected_reads}. Collecting at least {NR_OF_READS} reads.")
-			write_tmp_fasta(tmp_fasta, f_in)
-			(seq_start, seq_end, nr_of_results,
-				ref_transcript_id) = run_blat(ref, tmp_fasta)
-			seqs_searched += 1
+				print(f"Collected reads: {collected_reads}. Collecting at least {NR_OF_READS} reads.")
+				write_tmp_fasta(tmp_fasta, f_in)
+				(seq_start, seq_end, nr_of_results,
+					ref_transcript_id) = run_blat(ref, tmp_fasta)
+				seqs_searched += 1
+		
+				if (nr_of_results == 1):
+					read_type = orientation_analysis(seq_start, seq_end)
+					if (read_type == "F"):
+						forward += 1
+					elif (read_type == "R"):
+						reverse += 1
+					collected_reads += 1
+
+					if (collected_reads > (NR_OF_READS-1)):
+						(lib_type,
+							p_value) = get_libtype_and_pvalue(forward, reverse,
+																collected_reads)
+	except StopIteration:
+		pass
 	
-			if (nr_of_results == 1):
-				read_type = orientation_analysis(seq_start, seq_end)
-				if (read_type == "F"):
-					forward += 1
-				elif (read_type == "R"):
-					reverse += 1
-				collected_reads += 1
-
-				if (collected_reads > (NR_OF_READS-1)):
-					(lib_type,
-						p_value) = get_libtype_and_pvalue(forward, reverse,
-															collected_reads)
-
 	subprocess.run(['rm', tmp_fasta]) # Removing the tmp FASTA file
 
 	if (seqs_searched == MAX_BLATS or lib_type == "N/A"):
@@ -115,15 +123,18 @@ def get_libtype_and_pvalue(forward, reverse, collected_reads):
 	second to most likely library type.
 	'''
 
+	p_values = 0.99
+	lib_type = "N/A"
 	p_values = []
 
 	p_values.append(stats.fisher_exact([STRANDED_DATA, [forward, collected_reads-forward]])[1])
 	p_values.append(stats.fisher_exact([STRANDED_DATA, [reverse, collected_reads-reverse]])[1])
 	p_values.append(stats.fisher_exact([UNSTRANDED_DATA, [forward, collected_reads-forward]])[1])
 
-	p_value = sorted(p_values, reverse=True)[1] # This is the second to highest p_value.
+	if (max(p_values) > NULL_P):
+		p_value = sorted(p_values, reverse=True)[1] # This is the second to highest p_value.
 
-	lib_type = LIB_TYPE_DICT.get(p_values.index(max(p_values)))
+		lib_type = LIB_TYPE_DICT.get(p_values.index(max(p_values)))
 	
 	print(f'The list of p-values ["SF", "SR", "U"] = {p_values}\n'
 		f'The library type appears to be: {lib_type}.\n'
@@ -182,7 +193,7 @@ def run_blat(ref, seq):
 
     # Blatting, and creating tmp blat result file
     subprocess.run(['./blat', ref, seq, '-out=blast8', tmp_rslt])
-    for line in open(tmp_rslt, 'r'):
+    for line in open(tmp_rslt):
         nr_of_results += 1 # Each row represents an alignment
     if (nr_of_results > 0):
         with open(tmp_rslt, 'r') as f_in:
@@ -208,6 +219,7 @@ def run_blat(ref, seq):
 
     return (int(seq_start), int(seq_end),
             nr_of_results, ref_transcript_id)
+
 
 ###--------- MAIN ---------###
 
