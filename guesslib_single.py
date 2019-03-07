@@ -20,7 +20,7 @@ NR_OF_READS = 10
 MAX_BLATS = 1000
 
 # Specify the significance threshold for the p-values.
-SIGNIFICANT_P = 0.01
+SIGNIFICANT_P = 0.05
 
 # Specify the significance threshold for p_value corresponding to
 # the null hypotheses that we want to be true. collected data looks
@@ -111,7 +111,8 @@ def guesslib_single(ref, user_transcripts):
 
 	end_time = time.time()
 	analysis_time = round(((end_time - start_time)/60), 2)
-	print(f'Guesslib took {analysis_time} min to do the analysis.')
+	print(f'Guesslib took {int(analysis_time)} minutes and'
+		f' {int((analysis_time-int(analysis_time))*60)} seconds to do the analysis.')
 	
 	return (lib_type, forward, reverse, collected_reads,
 			succesful_lib_determination, analysis_time)

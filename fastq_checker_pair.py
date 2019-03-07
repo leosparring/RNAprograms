@@ -108,7 +108,7 @@ def check_format_and_remove_low_quality_reads_pair(fastq_file_1, fastq_file_2):
 		# Calculating the average Q-values
 		fin1_avg_quality = fin1_avg_quality / nr_of_seqs_fin
 		fin2_avg_quality = fin2_avg_quality / nr_of_seqs_fin
-		fin2_avg_quality = (fin1_avg_quality + fin2_avg_quality)/2
+		fin_avg_quality = (fin1_avg_quality + fin2_avg_quality)/2
 		fout1_avg_quality = fout1_avg_quality / nr_of_seqs_fout
 		fout2_avg_quality = fout2_avg_quality / nr_of_seqs_fout
 		fout_avg_quality = (fout1_avg_quality + fout2_avg_quality)/2

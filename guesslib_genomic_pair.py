@@ -20,7 +20,7 @@ NR_OF_PAIRS = 10
 MAX_BLATS = 1000
 
 # Specify the significance threshold for the p-values.
-SIGNIFICANT_P = 0.05
+SIGNIFICANT_P = 0.01
 
 # Specify the significance threshold for p_value corresponding to
 # the null hypotheses that we want to be true. collected data looks
@@ -29,24 +29,26 @@ NULL_P = 0.01
 
 # Dictionary of the different library types.
 LIB_TYPE_DICT = {
-	0 : "SF",
-	1 : "SR",
-	2 : "U"
+	0 : "I",
+	1 : "O"
 }
 
 ###--------- TRAINED STATS ---------###
 
-# This array contains typical data of an unstranded paired library
-# First element represents forwards, the second one is 'other types'
-PAIRED_UNSTRANDED_DATA = ([500,502])
+# This array contains typical data of an inwards library, the first element
+# is the nr of reads that were inward oriented, the second is the total
+# nr of collected pairs
+INWARD_DATA = ([1000, 5])
 
-# This array contains typical data of a stranded paired library
-# First element represents forwards or reverses, the second one is 'other types'
-PAIRED_STRANDED_DATA = ([995, 5])
+# This array contains typical data of an outwards library, the first element
+# is the nr of reads that were outward oriented, the second is the total
+# nr of collected pairs
+OUTWARD_DATA = ([900, 100])
+
 
 ###--------- FUNCTIONS ---------###
 
-def guesslib_pair(ref, user_transcripts_f1, user_transcripts_f2):
+def guesslib_genomic_pair(ref, user_transcripts_f1, user_transcripts_f2):
 	'''
 	Finds NR_OF_PAIRS pairs and
 	determines if the library is forward, reverse or unstranded
@@ -162,45 +164,21 @@ def get_libtype_and_pvalue(o_and_f, o_and_r, i_and_f, i_and_r, collected_pairs):
 	inwards = i_and_f + i_and_r
 	outwards = o_and_f + o_and_r
 
-	# Then we check strandedness
-	# If inward we check strandedness for inward:
-	if (inwards/collected_pairs > 0.5):
-		p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
-			[i_and_f, collected_pairs-i_and_f]])[1])
-		p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
-			[i_and_r, collected_pairs-i_and_r]])[1])
-		p_values.append(stats.fisher_exact([PAIRED_UNSTRANDED_DATA,
-			[i_and_f, collected_pairs-i_and_f]])[1])
+	p_values.append(stats.fisher_exact([INWARD_DATA,
+		[inwards, collected_pairs-inwards]])[1])
+	p_values.append(stats.fisher_exact([OUTWARD_DATA,
+		[outwards, collected_pairs-outwards]])[1])
 
-		# This is the second to highest p_value.
-		p_value = sorted(p_values, reverse=True)[1] 
-		# Retrieving orientation corresponding to highest p_val, from dictionary
-		lib_type = "I" + LIB_TYPE_DICT.get(p_values.index(max(p_values))) 
+	# This is the lowest of the two p values.
+	p_value = min(p_values)
+	# Retrieving orientation corresponding to highest p_val, from dictionary
+	lib_type = LIB_TYPE_DICT.get(p_values.index(max(p_values))) 
 
-		print(f'The list of p-values ["SF", "SR", "U",] = {p_values}\n'
-		f'The library type appears to be: {lib_type}.\n'
-		f'The second to highest p-value is: {p_value}')
-
-	# If outward we check strandedness for outward:
-	elif (outwards/collected_pairs > 0.5):
-		p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
-			[o_and_f, collected_pairs-o_and_f]])[1])
-		p_values.append(stats.fisher_exact([PAIRED_STRANDED_DATA,
-			[o_and_r, collected_pairs-o_and_r]])[1])
-		p_values.append(stats.fisher_exact([PAIRED_UNSTRANDED_DATA,
-			[o_and_f, collected_pairs-o_and_f]])[1])
-
-		# This is the second to highest p_value.
-		p_value = sorted(p_values, reverse=True)[1] 
-		# Retrieving orientation corresponding to highest p_val, from dictionary
-		lib_type = "O" + LIB_TYPE_DICT.get(p_values.index(max(p_values)))
-
-		print(f'The list of p-values ["SF", "SR", "U"] = {p_values}\n'
-		f'The library type appears to be: {lib_type}.\n'
-		f'The second to highest p-value is: {p_value}\n')
+	print(f'The list of p-values ["I", "O"] = {p_values}\n'
+	f'The library type appears to be: {lib_type}.\n'
+	f'The second to highest p-value is: {p_value}')
 
 	return lib_type, p_value
-
 
 def pair_analysis(seq_start_R1, seq_end_R1, seq_start_R2, seq_end_R2):
 	'''
@@ -342,3 +320,4 @@ def main():
 		
 if __name__ == "__main__":
 	main()
+ 
